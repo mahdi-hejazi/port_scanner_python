@@ -1,10 +1,10 @@
 #url i used :   https://resources.infosecinstitute.com/port-scanning-using-scapy/#gref
-
-
 # This script runs on Python 3
+
+
 import binascii
 import socket, threading
-import struct
+import sys, getopt
 from struct import pack
 
 
@@ -15,9 +15,10 @@ def TCP_connect(ip, port_number, delay, output):
     TCPsock.settimeout(delay)
     try:
         TCPsock.connect((ip, port_number))
-        output[port_number] = 'Listening'
+        output[port_number] = 'open'
+        TCPsock.close()
     except:
-        output[port_number] = ''
+        output[port_number] = 'closed'
     return
 
 
@@ -117,45 +118,52 @@ class TCPpacket:
 # however, lazy PoC (012 = [SYN ACK]), therefore:
 #and (004=[rst])
 #url i use to response :   https://resources.infosecinstitute.com/port-scanning-using-scapy/#gref
-def check_if_open(port, response,method):
+def check_if_open(port, response,method,outputs):
     cont = binascii.hexlify(response)
     if(method==0 ):#syn scan
         if cont[65:68] == b"012": # we receve a syn/ack response
-            print("Port " + str(port) + " is: open")
+            #print("Port " + str(port) + " is: open")
+            outputs[port]='open'
         elif cont[65:68]== b'004':                              # b"004" :we receve a rst response
-            print("Port " + str(port) + " is: closed")
+            #print("Port " + str(port) + " is: closed")
+            outputs[port] = 'closed'
         else:    #icmp eror (type3,code 1,2,3,9,10 or 13)
-            print("Port " + str(port) + " is: filtered")
+            #print("Port " + str(port) + " is: filtered")
+            outputs[port] = 'filtered'
 
     elif(method==2):#fin scan
         if cont[65:68] == b'004':  # b"004" :we receve a rst response
-            print("Port " + str(port) + " is: closed")
+            #print("Port " + str(port) + " is: closed")
+            outputs[port] = 'closed'
         else: #icmp eror (type3,code 1,2,3,9,10 or 13)
-            print("Port " + str(port) + " is: filetered")
+            #print("Port " + str(port) + " is: filetered")
+            outputs[port] = 'filtered'
 
     elif(method==1): #ack scan
         if cont[65:68]== b'004':                              # b"004" :we receve a rst response
-            print("Port " + str(port) + " is: unfiltered")
+            #print("Port " + str(port) + " is: unfiltered")
+            outputs[port] = 'unfiltered'
         else:                                 # icmp eror (type3,code 1,2,3,9,10 or 13)
-            print("Port " + str(port) + " is: filetered")
+            #print("Port " + str(port) + " is: filetered")
+            outputs[port] = 'filtered'
 
-    else :  #method 3   windows scan
+    elif(method==3) :  #method 3   windows scan
         if cont[65:68]== b'004':                 # b"004" :we receve a rst response
             if cont[68: 72] != b"0000" :          #if windows size is positive isnot zero
-                print("Port " + str(port) + " is: open")
+                #print("Port " + str(port) + " is: open")
+                outputs[port] = 'open'
             else:
-                print("Port " + str(port) + " is: closed")
-        else:
-            #print("Port " + str(port) + " is: closed")
-            pass  #we canot say any thing with this type of scan
+                #print("Port " + str(port) + " is: closed")
+                outputs[port] = 'closed'
+        else:                                                       # icmp eror (type3,code 1,2,3,9,10 or 13)
+            #print("Port " + str(port) + " is: filtered")
+            outputs[port] = 'filtered'
 
 
 def dedicat_local_port():
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.bind(('', 0))
     return s.getsockname()[1]
-
-
 
 def dedicat_local_ip():
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -180,17 +188,19 @@ def scan_connect_ports(host_ip, delay, first_porst, endport):
     for i in range(endport-first_porst):
         threads[i].join()
 
+    print("  -   -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -")
+    print("open ports : ")
     # Printing listening ports from small to large
     for i in range(first_porst, endport):
-        if output[i] == 'Listening':
-            print(str(i) + ': ' + output[i])
+        if output[i] == 'open':
+            print(str(i) ,end=' , ' )
 
 #-------------------------------------------------------------------------------------
-def scan_tcp(my_ip, host_ip, my_port, host_port,delay, method):
+def scan_tcp(my_ip, host_ip, my_port, host_port,delay, method,outputs):
     p = TCPpacket(my_ip, host_ip, my_port, host_port, method)
     try:
         result = p.send_packet(host_ip, delay)
-        check_if_open(host_port, result,method)
+        check_if_open(host_port, result,method,outputs)
         if(method == 0):    #we must send a rst to finish three way handshake
             p = TCPpacket(my_ip, host_ip, my_port, host_port, 4)  # send a rst packet to finish the connection
             try:
@@ -199,17 +209,20 @@ def scan_tcp(my_ip, host_ip, my_port, host_port,delay, method):
                 print("port " + str(host_port) + " : cannot send rst for finish the port")
     except:
         if(method==2): #fin scan      no response
-            print("port " + str(host_port) + " : is open")
-        elif(method==3): #windows scan  nothing to say
-            pass
+            outputs[host_port] = 'open'
+            #print("port " + str(host_port) + " : is open")
+        #elif(method==3): #windows scan  nothing to say
+         #   pass
         else:
-            print("port " + str(host_port) + " : is filtered")
+            outputs[host_port] = 'filtered'
+            #print("port " + str(host_port) + " : is filtered")
 
 
 
 
 def scan_tcp_ports(host_name, delay, first_porst, end_port,method):
     threads = []  # To run TCP_connect concurrently
+    outputs = {}
     my_ip = dedicat_local_ip()
     try:
         my_port = dedicat_local_port()
@@ -219,7 +232,7 @@ def scan_tcp_ports(host_name, delay, first_porst, end_port,method):
 
     # Spawning threads to scan ports
     for host_port in range(first_porst, end_port):
-        t = threading.Thread(target=scan_tcp, args=(my_ip, host_ip, my_port, host_port, delay, method))
+        t = threading.Thread(target=scan_tcp, args=(my_ip, host_ip, my_port, host_port, delay, method,outputs))
         threads.append(t)
 
     # Starting threads
@@ -230,20 +243,70 @@ def scan_tcp_ports(host_name, delay, first_porst, end_port,method):
     for i in range(end_port-first_porst):
         threads[i].join()
 
+    # Printing listening ports from small to large
+    print("   -----------------------------------************-----------------------------------")
+    print("open ports : ")
+    for i in range(first_porst, end_port):
+        if outputs[i] == 'open':
+            print(str(i), end=' , ')
+    print("  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  ")
+    print("close ports : ")
+    for i in range(first_porst, end_port):
+        if outputs[i] == 'closed':
+            print(str(i) ,end= ' , ')
+    print("  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  ")
+    print("filtered ports : ")
+    for i in range(first_porst, end_port):
+        if outputs[i] == 'filtered':
+            print(str(i) ,end= ' , ')
+    print("  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  ")
+    print("unfiltered ports : ")
+    for i in range(first_porst, end_port):
+        if outputs[i] == 'unfiltered':
+            print(str(i) , end=' , ')
+    print("  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  ")
 
 
-def main():
-    #remoteServer = input('inter a host name: ')
-    #delay = int(input("How many seconds the socket is going to wait until timeout: "))
-    method = int(input("inter method: 0:syn 1:ack 2:fin 3:windows "))
-    scan_tcp_ports('khamenei.ir', 3, 0, 3000,method)
+def main(argv):
+    host_name=""
+    delay = first_porst = end_port = method = 0
+    try:
+      opts, args = getopt.getopt(argv,"ht:f:l:s:d:",[])
+    except getopt.GetoptError:
+      print ('−t <host_name>  −f <firstport>  -l< lastport>   −s <type of scan>   −d <delay>')
+      print ('type of scans: CS=connect scan  ,  TSS=tcp syn scan , TAS=tcp ack scan , TFS=tcp fin scan , TWS=tcp window scan')
+      sys.exit(2)
+    for opt, arg in opts:
+        if opt == '-h':
+         print ('−t <host_name>  −f <firstport>  -l<lastport> −s <type of scan> −𝑑 <delay>')
+         print ('type of scans: CS=connect scan  ,  TSS=tcp syn scan , TAS=tcp ack scan , TFS=tcp fin scan , TWS=tcp window scan')
+         sys.exit()
+        elif opt in ('-t'):
+            host_name=arg
+        elif opt in ('-f'):
+            first_porst=int(arg)
+        elif opt in ('-l'):
+            end_port=int(arg)
+        elif opt in ('-d'):
+            delay=int(arg)
+        elif opt in ("-s"):           #remember method==4 is for making a rst tcp packet
+            if(arg=='CS'):
+                method=5
+            elif(arg=='TSS'):
+                method=0
+            elif(arg=='TAS'):
+                method=1
+            elif(arg=='TFS'):
+                method=2
+            elif(arg=='TWS'):
+                method=3
+    if(method == 5):#connect scan
+        host_ip=socket.gethostbyname(host_name)
+        scan_connect_ports(host_ip, delay, first_porst, end_port)
+    else:#tcp syn or ack or fin or window scannig
+        scan_tcp_ports(host_name, delay, first_porst, end_port, method)
 
 
-""" remoteServer = input('inter a host name: ')
- host_ip = socket.gethostbyname(remoteServer)
- print (str(host_ip))
- delay = int(input("How many seconds the socket is going to wait until timeout: "))
- scan_ports(host_ip, delay)"""
 
 if __name__ == "__main__":
-    main()
+   main(sys.argv[1:])
